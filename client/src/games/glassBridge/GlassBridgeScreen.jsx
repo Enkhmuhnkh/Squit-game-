@@ -4,6 +4,11 @@ import ErrorBoundary from '../../components/ErrorBoundary.jsx';
 import Bridge from './Bridge.jsx'; // 2D (CSS) хувилбар — WebGL ажиллахгүй үед fallback
 import PlayerHud from './PlayerHud.jsx';
 import Shop from './Shop.jsx';
+import ResultOverlay from '../../components/ResultOverlay.jsx';
+import ReactionBar from '../../components/ReactionBar.jsx';
+import { playTick, playPurchase, playUse } from '../../lib/sfx.js';
+import { useCountdown } from '../../lib/useCountdown.js';
+import { detectPreferredView } from '../../lib/deviceCapability.js';
 
 // three.js том тул зөвхөн Шилэн гүүр нээгдэхэд ачаална
 const Bridge3D = lazy(() => import('./Bridge3D.jsx'));
@@ -12,21 +17,14 @@ const fmt = (n) => `$${n.toLocaleString('en-US')}`;
 const VIEW_KEY = 'partyhub.gb.view';
 
 function loadView() {
-  try { return localStorage.getItem(VIEW_KEY) === '2d' ? '2d' : '3d'; } catch { return '3d'; }
+  try {
+    const saved = localStorage.getItem(VIEW_KEY);
+    if (saved === '2d' || saved === '3d') return saved; // хэрэглэгчийн гараар сонгосон — үргэлж давамгайлна
+  } catch { /* ignore */ }
+  return detectPreferredView();
 }
 function saveView(v) {
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ }
-}
-
-/** Үлдсэн хугацааг серверийн цагтай тулган тооцно (skew-ээр засна). */
-function useCountdown(deadline, skew) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 200);
-    return () => clearInterval(t);
-  }, []);
-  if (!deadline) return null;
-  return Math.max(0, Math.ceil((deadline - (now + skew)) / 1000));
 }
 
 export default function GlassBridgeScreen() {
@@ -52,18 +50,29 @@ export default function GlassBridgeScreen() {
   // Ээлж өөрчлөгдвөл зорилтот сонголтыг цуцална
   useEffect(() => { setTargeting(null); }, [game.currentPlayerId]);
 
+  // Сүүлийн 5 секундэд "tick" дуу
+  useEffect(() => {
+    if (running && seconds !== null && seconds > 0 && seconds <= 5) playTick();
+  }, [seconds, running]);
+
   const guard = (fn) => async (...args) => {
     try { await fn(...args); } catch (e) { notify(e.message); }
   };
 
+  const onBuy = guard(async (item) => {
+    await buy(item);
+    playPurchase();
+  });
   const onUse = guard(async (item) => {
     if (item === 'swap' || item === 'push') return setTargeting(item);
     await useItem(item);
+    playUse();
   });
   const onPickTarget = guard(async (targetId) => {
     const item = targeting;
     setTargeting(null);
     await useItem(item, targetId);
+    playUse();
   });
 
   const switchView = (v) => { setView(v); saveView(v); };
@@ -88,6 +97,8 @@ export default function GlassBridgeScreen() {
           <p className="font-mono text-lg text-rose-300">{fmt(game.deathPool)}</p>
         </div>
       </header>
+
+      <ReactionBar />
 
       <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
         <section className="flex flex-col gap-2">
@@ -139,47 +150,37 @@ export default function GlassBridgeScreen() {
             myTurn={myTurn}
             active={active}
             targeting={targeting}
-            onBuy={guard(buy)}
+            onBuy={onBuy}
             onUse={onUse}
             onCancelTarget={() => setTargeting(null)}
           />
         </aside>
       </div>
 
-      {result && <ResultOverlay game={game} result={result} onClose={dismissGame} />}
+      {result && (
+        <ResultOverlay
+          game={game}
+          result={result}
+          myId={myId}
+          emptyText="Хэн ч нэг ч шат давсангүй 💀"
+          reasonText={
+            result.reason === 'furthest'
+              ? 'Хэн ч гүүрийг давсангүй — хамгийн хол очсон тоглогч Death Pool-ийг авлаа'
+              : 'Гүүрийг давсан тоглогчид Death Pool-ийг хуваалаа'
+          }
+          shareInfo={{
+            gameName: 'Шилэн гүүр',
+            headline: result.winners.includes(myId)
+              ? 'Гүүрийг давлаа!'
+              : me?.finished
+                ? 'Гүүрийг давлаа!'
+                : `${me?.step ?? 0}-р шат хүртэл хүрлээ`,
+            subline: result.winners.includes(myId) ? undefined : 'Шилэн гүүрт унасан…',
+            stat: `${me?.step ?? 0} / ${game.steps} шат`,
+          }}
+          onClose={dismissGame}
+        />
+      )}
     </main>
-  );
-}
-
-function ResultOverlay({ game, result, onClose }) {
-  const name = (id) => game.players.find((p) => p.id === id)?.nickname ?? '?';
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-slate-900 p-6 text-center ring-1 ring-amber-300/30">
-        <h2 className="text-2xl font-bold">Тоглоом дууслаа</h2>
-        {result.winners.length === 0 ? (
-          <p className="mt-3 text-slate-300">Хэн ч нэг ч шат давсангүй 💀</p>
-        ) : (
-          <>
-            <p className="mt-2 text-sm text-slate-400">
-              {result.reason === 'furthest'
-                ? 'Хэн ч гүүрийг давсангүй — хамгийн хол очсон тоглогч Death Pool-ийг авлаа'
-                : 'Гүүрийг давсан тоглогчид Death Pool-ийг хуваалаа'}
-            </p>
-            <ul className="mt-4 flex flex-col gap-2">
-              {result.winners.map((id) => (
-                <li key={id} className="rounded-lg bg-emerald-500/15 px-3 py-2">
-                  🏆 <b>{name(id)}</b>
-                  <span className="ml-2 font-mono text-emerald-300">+{fmt(result.payouts[id] ?? 0)}</span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        <button onClick={onClose} className="mt-6 w-full rounded-lg bg-emerald-500 py-3 font-semibold text-black">
-          Өрөө рүү буцах
-        </button>
-      </div>
-    </div>
   );
 }

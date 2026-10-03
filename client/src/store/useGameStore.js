@@ -6,6 +6,7 @@ let bound = false;
 let noticeTimer = null;
 let cheatTimer = null;
 let stepCounter = 0;
+let reactionCounter = 0;
 
 export const useGameStore = create((set, get) => {
   /** game төлөвийг аюулгүй шинэчлэх */
@@ -30,7 +31,20 @@ export const useGameStore = create((set, get) => {
     });
     socket.on('disconnect', () => set({ connected: false }));
 
-    socket.on('room:state', (room) => set({ room }));
+    socket.on('room:state', (room) => set({ room, quickMatch: null }));
+
+    socket.on('quickmatch:waiting', (status) => set({ quickMatch: status }));
+
+    socket.on('room:reaction', ({ playerId, emoji }) => {
+      const id = ++reactionCounter;
+      set((s) => ({ reactions: [...s.reactions, { id, playerId, emoji }] }));
+      setTimeout(() => set((s) => ({ reactions: s.reactions.filter((r) => r.id !== id) })), 2200);
+    });
+
+    socket.on('room:kicked', () => {
+      set({ room: null, game: null, result: null, showGame: false });
+      notify('Таныг өрөөнөөс хаслаа');
+    });
 
     socket.on('game:started', () => set({ result: null, showGame: true, cheat: null, lastStep: null }));
 
@@ -95,6 +109,41 @@ export const useGameStore = create((set, get) => {
       patchGame((g) => ({ ...g, status: 'finished' }));
       set({ result, cheat: null });
     });
+
+    // ───── Улаан гэрэл, Ногоон гэрэл ─────
+
+    socket.on('rl:light', ({ light, deadline, serverTime }) => {
+      set({ skew: serverTime - Date.now() });
+      patchGame((g) => ({ ...g, light, deadline }));
+    });
+
+    socket.on('rl:progress', ({ playerId, progress, finished }) => {
+      patchGame((g) => ({
+        ...g,
+        players: g.players.map((p) => (p.id === playerId ? { ...p, progress, finished } : p)),
+      }));
+    });
+
+    socket.on('rl:eliminated', ({ playerId }) => {
+      patchGame((g) => ({
+        ...g,
+        players: g.players.map((p) => (p.id === playerId ? { ...p, alive: false } : p)),
+      }));
+      set({ lastStep: { eliminated: true, playerId, id: ++stepCounter } });
+    });
+
+    socket.on('rl:balances', ({ balances, deathPool }) => {
+      patchGame((g) => ({
+        ...g,
+        deathPool,
+        players: g.players.map((p) => ({ ...p, balance: balances[p.id] ?? p.balance })),
+      }));
+    });
+
+    socket.on('rl:finished', (result) => {
+      patchGame((g) => ({ ...g, status: 'finished' }));
+      set({ result, cheat: null });
+    });
   }
 
   return {
@@ -111,6 +160,10 @@ export const useGameStore = create((set, get) => {
     showGame: false,
     notice: null,
     notify,
+    uiView: 'lobby', // 'lobby' | 'stats'
+    setUiView: (uiView) => set({ uiView }),
+    quickMatch: null, // { gameId, size, minPlayers } | null
+    reactions: [], // [{ id, playerId, emoji }] — богино хугацаанд float хийгээд арилна
 
     // ───── үйлдлүүд ─────
     boot() {
@@ -149,11 +202,26 @@ export const useGameStore = create((set, get) => {
 
     selectGame: (gameId) => emit('room:selectGame', { gameId }),
     startGame: () => emit('game:start'),
+    kickPlayer: (targetId) => emit('room:kick', { targetId }),
+
+    async quickMatchJoin(gameId) {
+      const { status } = await emit('quickmatch:join', { gameId });
+      set({ quickMatch: status });
+    },
+    async quickMatchLeave() {
+      await emit('quickmatch:leave').catch(() => {});
+      set({ quickMatch: null });
+    },
+
+    react: (emoji) => emit('room:react', { emoji }).catch(() => {}),
 
     // ───── Шилэн гүүр ─────
     choose: (side) => emit('gb:choose', { side }),
     buy: (item) => emit('gb:buy', { item }),
     useItem: (item, targetId) => emit('gb:useItem', { item, targetId }),
+
+    // ───── Улаан гэрэл, Ногоон гэрэл ─────
+    move: () => emit('rl:move'),
 
     dismissGame() {
       emit('game:ackResult').catch(() => {}); // refresh хийвэл үр дүнг дахин үзүүлэхгүй

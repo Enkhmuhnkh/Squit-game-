@@ -23,11 +23,12 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto flex min-h-[80vh] max-w-sm flex-col justify-center gap-6 px-4">
+    <main className="mx-auto flex min-h-[90vh] max-w-sm flex-col justify-center gap-6 px-4 py-10">
       <header className="text-center">
         <h1 className="text-3xl font-bold tracking-tight">Party Game Hub</h1>
-        <p className="mt-1 text-slate-400">Бүртгэлгүй. Хоч нэрээ бичээд л тоглоорой.</p>
+        <p className="mt-1 text-slate-400">Бүртгэлгүй, үнэгүй — найзуудтайгаа real-time тоглоорой.</p>
       </header>
+
       <form onSubmit={submit} className="flex flex-col gap-3">
         <input
           value={nickname}
@@ -45,6 +46,30 @@ export default function Home() {
         </button>
         {error && <p className="text-sm text-rose-400">{error}</p>}
       </form>
+
+      <section className="flex flex-col gap-2">
+        <p className="text-center text-xs font-semibold uppercase tracking-widest text-slate-500">Тоглоомууд</p>
+        <div className="grid grid-cols-2 gap-2">
+          <GameCard emoji="🌉" name="Шилэн гүүр" desc="30 шат, эдийн засаг, зальт item-ууд" />
+          <GameCard emoji="🟢🔴" name="Улаан/Ногоон гэрэл" desc="Хөдлөхөө мэд — хураагдвал үхнэ" />
+        </div>
+      </section>
+
+      <ul className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center text-xs text-slate-500">
+        <li>✅ Бүртгэлгүй</li>
+        <li>✅ Үнэгүй</li>
+        <li>✅ 2–20 хүнтэй тоглоно</li>
+      </ul>
     </main>
+  );
+}
+
+function GameCard({ emoji, name, desc }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg bg-slate-800/70 p-3 ring-1 ring-white/5">
+      <span className="text-2xl">{emoji}</span>
+      <p className="text-sm font-semibold">{name}</p>
+      <p className="text-xs text-slate-400">{desc}</p>
+    </div>
   );
 }

@@ -84,6 +84,16 @@ export class RoomManager {
     return room;
   }
 
+  /** Host lobby дотроос бусад тоглогчийг хасна. */
+  kick(host, targetId) {
+    const room = this.#requireHostLobby(host);
+    if (targetId === host.id) throw new GameError('BAD_TARGET', 'Өөрийгөө хасаж болохгүй');
+    const target = room.members.get(targetId);
+    if (!target) throw new GameError('NO_SUCH_PLAYER', 'Тоглогч олдсонгүй');
+    room.members.delete(targetId);
+    return { room, targetId };
+  }
+
   startGame(player) {
     const room = this.#requireHostLobby(player);
     const Engine = getEngineClass(room.gameId);

@@ -2,9 +2,11 @@ import { GameError } from '../games/GameError.js';
 import { RoomManager } from './RoomManager.js';
 import { SessionStore } from './SessionStore.js';
 import { Snapshotter } from './Snapshotter.js';
+import { Matchmaker } from './Matchmaker.js';
 import { saveFinishedGame } from '../persistence/gameRepository.js';
 
 const RATE_LIMIT_PER_SEC = 12;
+const REACTION_EMOJIS = new Set(['👍', '😂', '😱', '🔥', '👏', '💀']);
 
 export function attachHub(io, { store }) {
   const sessions = new SessionStore();
@@ -37,6 +39,31 @@ export function attachHub(io, { store }) {
     if (room.engine.isFinished() && room.members.get(playerId)?.ackedResult) return;
     const p = sessions.get(playerId);
     if (p?.socketId) io.to(p.socketId).emit('game:state', room.engine.getPublicState(playerId));
+  }
+
+  /** Дараалал бүрдмэгц өрөө үүсгэж, бүгдийг нэгтгээд автоматаар тоглоом эхлүүлнэ. */
+  function onMatched(gameId, players) {
+    const host = players[0];
+    const room = rooms.createRoom(host, gameId);
+    for (const p of players.slice(1)) rooms.join(room.code, p);
+    for (const p of players) {
+      const sock = p.socketId ? io.sockets.sockets.get(p.socketId) : null;
+      sock?.join(room.code);
+    }
+    const { room: startedRoom, events } = rooms.startGame(host);
+    broadcastRoom(startedRoom);
+    emitEvents(startedRoom, events);
+    for (const id of startedRoom.engine.players.keys()) sendGameState(startedRoom, id);
+  }
+
+  const matchmaker = new Matchmaker({ sessions, onMatched });
+
+  function broadcastQueue(gameId) {
+    const status = matchmaker.status(gameId);
+    for (const id of matchmaker.queuedPlayerIds(gameId)) {
+      const p = sessions.get(id);
+      if (p?.socketId) io.to(p.socketId).emit('quickmatch:waiting', status);
+    }
   }
 
   async function afterEngine(room, events) {
@@ -146,6 +173,19 @@ export function attachHub(io, { store }) {
       return {};
     });
 
+    on('room:kick', (player, { targetId }) => {
+      const { room, targetId: kickedId } = rooms.kick(player, targetId);
+      const target = sessions.get(kickedId);
+      if (target) target.roomCode = null;
+      const targetSocketId = target?.socketId;
+      if (targetSocketId) {
+        io.sockets.sockets.get(targetSocketId)?.leave(room.code);
+        io.to(targetSocketId).emit('room:kicked', {});
+      }
+      broadcastRoom(room);
+      return {};
+    });
+
     on('game:start', async (player) => {
       const { room, events } = rooms.startGame(player);
       broadcastRoom(room);
@@ -159,9 +199,29 @@ export function attachHub(io, { store }) {
       return {};
     });
 
-    // ───── Шилэн гүүр ─────
+    on('quickmatch:join', (player, { gameId }) => {
+      const status = matchmaker.join(player, gameId);
+      broadcastQueue(gameId);
+      return { status };
+    });
 
-    const gbAction = (player, action) => {
+    on('quickmatch:leave', (player) => {
+      const gameId = player.quickMatchGameId;
+      matchmaker.leave(player);
+      if (gameId) broadcastQueue(gameId);
+      return {};
+    });
+
+    on('room:react', (player, { emoji }) => {
+      if (!player.roomCode) throw new GameError('NOT_IN_ROOM', 'Та өрөөнд байхгүй байна');
+      if (!REACTION_EMOJIS.has(emoji)) throw new GameError('BAD_EMOJI', 'Зөвшөөрөгдөөгүй emoji');
+      io.to(player.roomCode).emit('room:reaction', { playerId: player.id, emoji });
+      return {};
+    });
+
+    // ───── тоглоомын үйлдэл (engine бүр энэ ерөнхий dispatch-ийг ашиглана) ─────
+
+    const dispatchAction = (player, action) => {
       const room = rooms.getRoom(player.roomCode);
       if (!room?.engine || room.status !== 'playing') {
         throw new GameError('NOT_RUNNING', 'Тоглоом явагдаагүй байна');
@@ -170,13 +230,20 @@ export function attachHub(io, { store }) {
       return afterEngine(room, events);
     };
 
-    on('gb:choose', (player, { side }) => gbAction(player, { type: 'choose', side }));
-    on('gb:buy', (player, { item }) => gbAction(player, { type: 'buy', item }));
-    on('gb:useItem', (player, { item, targetId }) => gbAction(player, { type: 'use', item, targetId }));
+    // ───── Шилэн гүүр ─────
+    on('gb:choose', (player, { side }) => dispatchAction(player, { type: 'choose', side }));
+    on('gb:buy', (player, { item }) => dispatchAction(player, { type: 'buy', item }));
+    on('gb:useItem', (player, { item, targetId }) => dispatchAction(player, { type: 'use', item, targetId }));
+
+    // ───── Улаан гэрэл, Ногоон гэрэл ─────
+    on('rl:move', (player) => dispatchAction(player, { type: 'move' }));
 
     socket.on('disconnect', () => {
       const player = socket.data.playerId ? sessions.get(socket.data.playerId) : null;
       if (!player || player.socketId !== socket.id) return; // шинэ socket-ээр аль хэдийн сэргэсэн
+      const queuedGameId = player.quickMatchGameId;
+      matchmaker.leave(player);
+      if (queuedGameId) broadcastQueue(queuedGameId);
       player.socketId = null;
       const room = rooms.setConnected(player, false);
       if (room) broadcastRoom(room);

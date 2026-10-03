@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useGameStore } from '../store/useGameStore.js';
 import { gameScreens } from '../games/index.js';
+import ReactionBar from '../components/ReactionBar.jsx';
 
 export default function Room() {
   const session = useGameStore((s) => s.session);
   const room = useGameStore((s) => s.room);
   const game = useGameStore((s) => s.game);
   const showGame = useGameStore((s) => s.showGame);
-  const { leaveRoom, selectGame, startGame } = useGameStore.getState();
+  const { leaveRoom, selectGame, startGame, kickPlayer } = useGameStore.getState();
   const [error, setError] = useState('');
 
   const isHost = room.hostId === session.playerId;
@@ -47,6 +48,15 @@ export default function Room() {
               <span className="flex items-center gap-2 text-xs text-slate-400">
                 {p.id === room.hostId && <span className="rounded bg-amber-500/20 px-2 py-0.5 text-amber-300">HOST</span>}
                 <span className={`h-2 w-2 rounded-full ${p.connected ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                {isHost && room.status === 'lobby' && p.id !== session.playerId && (
+                  <button
+                    onClick={run(() => kickPlayer(p.id))}
+                    title="Хасах"
+                    className="rounded bg-rose-500/20 px-1.5 py-0.5 text-rose-300 hover:bg-rose-500/40"
+                  >
+                    ✕
+                  </button>
+                )}
               </span>
             </li>
           ))}
@@ -73,6 +83,8 @@ export default function Room() {
       </section>
 
       {error && <p className="text-center text-sm text-rose-400">{error}</p>}
+
+      <ReactionBar />
 
       <div className="mt-auto flex gap-3">
         <button onClick={run(leaveRoom)} className="rounded-lg bg-slate-800 px-4 py-3">Гарах</button>

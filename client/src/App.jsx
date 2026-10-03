@@ -1,8 +1,24 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useGameStore } from './store/useGameStore.js';
+import { isMuted, setMuted } from './lib/sfx.js';
+import FloatingReactions from './components/FloatingReactions.jsx';
 import Home from './pages/Home.jsx';
 import Lobby from './pages/Lobby.jsx';
 import Room from './pages/Room.jsx';
+import Stats from './pages/Stats.jsx';
+
+function MuteToggle() {
+  const [muted, setMutedState] = useState(isMuted);
+  return (
+    <button
+      onClick={() => { setMuted(!muted); setMutedState(!muted); }}
+      title={muted ? 'Дуу нээх' : 'Дуу хаах'}
+      className="fixed right-3 top-3 z-50 rounded-full bg-slate-800/80 px-2.5 py-2 text-sm ring-1 ring-white/10 backdrop-blur"
+    >
+      {muted ? '🔇' : '🔊'}
+    </button>
+  );
+}
 
 export default function App() {
   const session = useGameStore((s) => s.session);
@@ -10,12 +26,15 @@ export default function App() {
   const connected = useGameStore((s) => s.connected);
   const notice = useGameStore((s) => s.notice);
   const restoring = useGameStore((s) => s.restoring);
+  const uiView = useGameStore((s) => s.uiView);
   const boot = useGameStore((s) => s.boot);
 
   useEffect(() => { boot(); }, [boot]);
 
   return (
     <div className="min-h-full bg-gradient-to-b from-slate-950 to-slate-900">
+      <MuteToggle />
+      <FloatingReactions />
       {!connected && (
         <div className="bg-amber-500/90 text-black text-center text-sm py-1">Серверт холбогдож байна…</div>
       )}
@@ -26,7 +45,7 @@ export default function App() {
       )}
       {!session && restoring ? (
         <p className="pt-40 text-center text-slate-400">Таны өрөөг сэргээж байна…</p>
-      ) : !session ? <Home /> : !room ? <Lobby /> : <Room />}
+      ) : !session ? <Home /> : !room ? (uiView === 'stats' ? <Stats /> : <Lobby />) : <Room />}
     </div>
   );
 }

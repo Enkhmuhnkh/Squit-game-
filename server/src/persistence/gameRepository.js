@@ -37,11 +37,14 @@ export async function saveFinishedGame({ room, players, result, startedAt }) {
     );
     const sessionId = sessionRes.rows[0].id;
 
-    for (let i = 0; i < result.bridge.length; i++) {
-      await client.query(
-        'INSERT INTO bridge_maps (session_id, step, safe_side) VALUES ($1, $2, $3)',
-        [sessionId, i + 1, result.bridge[i]],
-      );
+    // Зөвхөн Glass Bridge шиг нууц map-тай тоглоомд байна (ж: Red Light-д байхгүй)
+    if (result.bridge) {
+      for (let i = 0; i < result.bridge.length; i++) {
+        await client.query(
+          'INSERT INTO bridge_maps (session_id, step, safe_side) VALUES ($1, $2, $3)',
+          [sessionId, i + 1, result.bridge[i]],
+        );
+      }
     }
 
     for (const p of result.players) {
